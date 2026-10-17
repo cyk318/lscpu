@@ -11,8 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var observers: [NSObjectProtocol] = []
     private var lastSignature = ""
     private var compactStatus = false
+    private var fullScreenCompact = false
     private var layoutCheckPending = false
     private var screenObserver: NSObjectProtocol?
+    private var spaceRefreshes: [DispatchWorkItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -44,11 +46,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             self?.popover.performClose(nil); self?.store.sleep()
         })
+        for notification in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didActivateApplicationNotification] {
+            observers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                // Opening our popover must not expand the status item and displace its anchor.
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+                self.spaceRefreshes.forEach { $0.cancel() }
+                self.spaceRefreshes = [0.4, 1.5, 3.0].map { delay in
+                    let refresh = DispatchWorkItem { [weak self] in
+                        guard let self, !self.popover.isShown else { return }
+                        self.fullScreenCompact = self.frontmostCoversScreen()
+                        self.restoreStatusLayout()
+                    }
+                    // Space notifications can arrive before the destination's windows are
+                    // onscreen. Bounded retries handle the transition without ongoing polling.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: refresh)
+                    return refresh
+                }
+            })
+        }
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.store.wake() })
+        fullScreenCompact = frontmostCoversScreen()
+        compactStatus = fullScreenCompact
         updateStatus(store.latest)
         store.start()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.restoreStatusLayout()
+            guard let self else { return }
+            self.fullScreenCompact = self.frontmostCoversScreen()
+            self.restoreStatusLayout()
         }
         if let index = CommandLine.arguments.firstIndex(of: "--capture-previews"), CommandLine.arguments.count > index + 1 {
             let directory = CommandLine.arguments[index + 1]
@@ -59,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         if CommandLine.arguments.contains("--diagnose-status") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                print("Window behavior: \(String(describing: self.statusItem.button?.window?.collectionBehavior)); on active Space: \(String(describing: self.statusItem.button?.window?.isOnActiveSpace))")
                 print("Compact: \(self.compactStatus); status visible: \(self.statusItem.isVisible), button: \(String(describing: self.statusItem.button?.frame)), window: \(String(describing: self.statusItem.button?.window?.frame))")
                 for screen in NSScreen.screens { print("Screen: \(screen.frame); right of notch: \(String(describing: screen.auxiliaryTopRightArea))") }
                 NSApp.terminate(nil)
@@ -110,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     func applicationWillTerminate(_ notification: Notification) {
         store.sleep()
+        spaceRefreshes.forEach { $0.cancel() }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
@@ -180,13 +207,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             statusItem.button?.image = image
         }
         statusItem.button?.toolTip = "Lscpu · " + accessibility
-            + (compactStatus ? localized(" · Menu bar space is limited; click for all metrics", " · 菜单栏空间不足，点击查看完整指标") : "")
+            + (fullScreenCompact ? localized(" · Full screen: click for all metrics", " · 全屏模式，点击查看完整指标")
+                : compactStatus ? localized(" · Menu bar space is limited; click for all metrics", " · 菜单栏空间不足，点击查看完整指标") : "")
         statusItem.button?.setAccessibilityValue(accessibility)
         scheduleStatusLayoutCheck()
     }
 
+    /// No Accessibility or Screen Recording permission: only public window bounds,
+    /// owner PID and layer are read. Window titles and image contents are not requested.
+    /// Also handles apps with their own borderless full-screen implementation.
+    private func frontmostCoversScreen() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return fullScreenCompact }
+        guard let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]],
+              let primary = NSScreen.screens.first else { return false }
+        for window in windows {
+            guard window[kCGWindowOwnerPID as String] as? Int32 == front.processIdentifier,
+                  window[kCGWindowLayer as String] as? Int == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
+            for screen in NSScreen.screens {
+                let frame = screen.frame
+                let top = primary.frame.maxY - frame.maxY
+                let menuHeight = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)
+                if abs(rect.minX - frame.minX) <= 2,
+                   abs(rect.width - frame.width) <= 2,
+                   rect.minY >= top - 2, rect.minY <= top + menuHeight + 2,
+                   rect.maxY >= top + frame.height - 2 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private func restoreStatusLayout() {
-        compactStatus = false
+        compactStatus = fullScreenCompact
         lastSignature = ""
         statusItem.isVisible = true
         updateStatus(store.latest)
@@ -206,10 +262,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.layoutCheckPending = false
             guard !self.compactStatus, let window = self.statusItem.button?.window,
                   let screen = window.screen else { return }
+            // A hidden / transitioning menu bar is not evidence of horizontal overflow.
+            // On Tahoe this can be a proxy window: isOnActiveSpace may remain false
+            // even while Control Center displays its status-item scene.
+            guard window.isVisible else { return }
             let frame = window.frame
+            guard frame.minY < screen.frame.maxY, frame.maxY > screen.visibleFrame.maxY else { return }
             // isVisible stays true for items hidden due to insufficient space.
             let usable = screen.auxiliaryTopRightArea ?? screen.frame
-            if frame.minX < usable.minX || frame.maxX > usable.maxX || !window.isVisible {
+            if frame.minX < usable.minX || frame.maxX > usable.maxX {
                 self.compactStatus = true
                 self.lastSignature = ""
                 self.updateStatus(self.store.latest)
