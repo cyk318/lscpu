@@ -10,11 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var subscriptions = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
     private var lastSignature = ""
+    private var compactStatus = false
+    private var layoutCheckPending = false
+    private var screenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = "PulseStatusItem"
+        // Seed only our item's initial placement; existing user placement is preserved.
+        let placementKey = "NSStatusItem Preferred Position LscpuStatusItem"
+        if UserDefaults.standard.object(forKey: placementKey) == nil {
+            UserDefaults.standard.set(0, forKey: placementKey)
+        }
+        statusItem.autosaveName = "LscpuStatusItem"
+        statusItem.isVisible = true
         if let button = statusItem.button {
             button.target = self
             button.action = #selector(togglePopover)
@@ -38,10 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.store.wake() })
         updateStatus(store.latest)
         store.start()
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.restoreStatusLayout()
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--capture-previews"), CommandLine.arguments.count > index + 1 {
             let directory = CommandLine.arguments[index + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 64) {
                 self.capturePreviews(directory: directory)
+                NSApp.terminate(nil)
+            }
+        }
+        if CommandLine.arguments.contains("--diagnose-status") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                print("Compact: \(self.compactStatus); status visible: \(self.statusItem.isVisible), button: \(String(describing: self.statusItem.button?.frame)), window: \(String(describing: self.statusItem.button?.window?.frame))")
+                for screen in NSScreen.screens { print("Screen: \(screen.frame); right of notch: \(String(describing: screen.auxiliaryTopRightArea))") }
                 NSApp.terminate(nil)
             }
         }
@@ -91,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     func applicationWillTerminate(_ notification: Notification) {
         store.sleep()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
     @objc private func togglePopover() {
@@ -130,11 +150,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             segments.append(Segment(title: "↓ " + DisplayFormat.rate(snapshot.network?.download), value: "↑ " + DisplayFormat.rate(snapshot.network?.upload), width: 87))
         }
         let accessibility = segments.map { "\($0.title) \($0.value)" }.joined(separator: ", ")
-        let signature = accessibility
-        guard signature != lastSignature || statusItem.button?.image == nil else { return }
+        let signature = "\(compactStatus):" + accessibility
+        guard signature != lastSignature || statusItem.button?.image == nil else {
+            scheduleStatusLayoutCheck()
+            return
+        }
         lastSignature = signature
-        if segments.isEmpty {
-            statusItem.button?.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "Lscpu")
+        if compactStatus || segments.isEmpty {
+            let icon = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "Lscpu")
+            icon?.size = NSSize(width: 16, height: 16)
+            statusItem.button?.image = icon
         } else {
             let width = segments.reduce(CGFloat(8)) { $0 + $1.width }
             let image = NSImage(size: NSSize(width: width, height: 22), flipped: false) { _ in
@@ -155,6 +180,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             statusItem.button?.image = image
         }
         statusItem.button?.toolTip = "Lscpu · " + accessibility
+            + (compactStatus ? localized(" · Menu bar space is limited; click for all metrics", " · 菜单栏空间不足，点击查看完整指标") : "")
         statusItem.button?.setAccessibilityValue(accessibility)
+        scheduleStatusLayoutCheck()
+    }
+
+    private func restoreStatusLayout() {
+        compactStatus = false
+        lastSignature = ""
+        statusItem.isVisible = true
+        updateStatus(store.latest)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        restoreStatusLayout()
+        return true
+    }
+
+    private func scheduleStatusLayoutCheck() {
+        guard !compactStatus, !layoutCheckPending else { return }
+        layoutCheckPending = true
+        // AppKit positions status items asynchronously after their image size changes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self else { return }
+            self.layoutCheckPending = false
+            guard !self.compactStatus, let window = self.statusItem.button?.window,
+                  let screen = window.screen else { return }
+            let frame = window.frame
+            // isVisible stays true for items hidden due to insufficient space.
+            let usable = screen.auxiliaryTopRightArea ?? screen.frame
+            if frame.minX < usable.minX || frame.maxX > usable.maxX || !window.isVisible {
+                self.compactStatus = true
+                self.lastSignature = ""
+                self.updateStatus(self.store.latest)
+            }
+        }
     }
 }
