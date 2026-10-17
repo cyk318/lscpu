@@ -1,0 +1,160 @@
+import AppKit
+import SwiftUI
+import Combine
+import PulseCore
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    private let store = MonitorStore()
+    private var statusItem: NSStatusItem!
+    private let popover = NSPopover()
+    private var subscriptions = Set<AnyCancellable>()
+    private var observers: [NSObjectProtocol] = []
+    private var lastSignature = ""
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "PulseStatusItem"
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(togglePopover)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.setAccessibilityLabel("Pulse")
+        }
+        popover.behavior = CommandLine.arguments.contains("--verify-ui") ? .applicationDefined : .transient
+        popover.animates = true
+        popover.delegate = self
+        store.onUpdate = { [weak self] snapshot in self?.updateStatus(snapshot) }
+        store.preferences.$visible.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { guard let self else { return }; self.lastSignature = ""; self.updateStatus(self.store.latest) }
+        }.store(in: &subscriptions)
+        store.preferences.$interval.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.store.start() }
+        }.store(in: &subscriptions)
+        let center = NSWorkspace.shared.notificationCenter
+        observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.popover.performClose(nil); self?.store.sleep()
+        })
+        observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.store.wake() })
+        updateStatus(store.latest)
+        store.start()
+        if let index = CommandLine.arguments.firstIndex(of: "--capture-previews"), CommandLine.arguments.count > index + 1 {
+            let directory = CommandLine.arguments[index + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 64) {
+                self.capturePreviews(directory: directory)
+                NSApp.terminate(nil)
+            }
+        }
+        if CommandLine.arguments.contains("--verify-ui") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.togglePopover() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                guard let view = self.popover.contentViewController?.view,
+                      let window = view.window, let screen = window.screen else {
+                    fputs("FAIL: Popover did not open\n", stderr); exit(1)
+                }
+                let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+                print("Popover content: \(rect); visible screen: \(screen.visibleFrame)")
+                guard screen.visibleFrame.contains(rect) else {
+                    fputs("FAIL: Popover content extends outside visible screen\n", stderr); exit(1)
+                }
+                if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: ".build/popover-actual.png"))
+                }
+                self.popover.performClose(nil)
+                print("PASS: Popover opened entirely inside visible screen and closed")
+                NSApp.terminate(nil)
+            }
+        }
+        if CommandLine.arguments.contains("--show") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.togglePopover() } }
+    }
+    private func capturePreviews(directory: String) {
+        do {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+                let view = NSHostingView(rootView: PopoverView(store: store, preferences: store.preferences))
+                view.appearance = NSAppearance(named: appearance)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 368, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = view.appearance
+                window.contentView = view
+                view.setFrameSize(view.fittingSize)
+                window.setContentSize(view.fittingSize)
+                view.layoutSubtreeIfNeeded()
+                view.display()
+                guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                if let data = bitmap.representation(using: .png, properties: [:]) {
+                    try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("pulse-\(name).png"))
+                }
+            }
+        } catch { NSLog("Preview capture failed: %@", error.localizedDescription) }
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        store.sleep()
+        observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+    }
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown { popover.performClose(nil); return }
+        let screen = button.window?.screen ?? NSScreen.main
+        let height = min(528, max(240, (screen?.visibleFrame.height ?? 600) - 24))
+        let size = NSSize(width: 368, height: height)
+        let controller = NSHostingController(rootView: PopoverView(store: store, preferences: store.preferences, height: height))
+        // Resolve geometry before showing. Automatic SwiftUI intrinsic resizing can otherwise
+        // grow an already-positioned popover upward behind the menu bar.
+        controller.sizingOptions = []
+        controller.view.setFrameSize(size)
+        controller.preferredContentSize = size
+        popover.contentViewController = controller
+        popover.contentSize = size
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+        if CommandLine.arguments.contains("--verify-ui") {
+            print("Anchor: \(button.bounds), window: \(String(describing: button.window?.frame)), shown: \(popover.isShown)")
+        }
+    }
+    func popoverDidClose(_ notification: Notification) {
+        if CommandLine.arguments.contains("--verify-ui") { print("Popover closed") }
+        // Destroy the view tree: closed popovers never lay out or animate charts.
+        popover.contentViewController = nil
+    }
+    private func updateStatus(_ snapshot: Snapshot) {
+        struct Segment { let title: String; let value: String; let width: CGFloat }
+        var segments: [Segment] = []
+        let prefs = store.preferences
+        if prefs.shows(.cpu) { segments.append(Segment(title: "CPU", value: DisplayFormat.percent(snapshot.cpu), width: 43)) }
+        if prefs.shows(.gpu) { segments.append(Segment(title: "GPU", value: DisplayFormat.percent(snapshot.gpu), width: 43)) }
+        if prefs.shows(.memory) { segments.append(Segment(title: "MEM", value: DisplayFormat.percent(snapshot.memory?.percent), width: 43)) }
+        if prefs.shows(.network) {
+            segments.append(Segment(title: "↓ " + DisplayFormat.rate(snapshot.network?.download), value: "↑ " + DisplayFormat.rate(snapshot.network?.upload), width: 87))
+        }
+        let accessibility = segments.map { "\($0.title) \($0.value)" }.joined(separator: ", ")
+        let signature = accessibility
+        guard signature != lastSignature || statusItem.button?.image == nil else { return }
+        lastSignature = signature
+        if segments.isEmpty {
+            statusItem.button?.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "Pulse")
+        } else {
+            let width = segments.reduce(CGFloat(8)) { $0 + $1.width }
+            let image = NSImage(size: NSSize(width: width, height: 22), flipped: false) { _ in
+                var x: CGFloat = 4
+                for segment in segments {
+                    let network = segment.title.hasPrefix("↓")
+                    let topFont = NSFont.systemFont(ofSize: network ? 9 : 7, weight: .medium)
+                    let bottomFont = NSFont.monospacedDigitSystemFont(ofSize: network ? 9 : 10, weight: .medium)
+                    let top = NSAttributedString(string: segment.title, attributes: [.font: topFont, .foregroundColor: NSColor.black])
+                    let bottom = NSAttributedString(string: segment.value, attributes: [.font: bottomFont, .foregroundColor: NSColor.black])
+                    top.draw(at: NSPoint(x: x + (segment.width - top.size().width) / 2, y: 12))
+                    bottom.draw(at: NSPoint(x: x + (segment.width - bottom.size().width) / 2, y: 1))
+                    x += segment.width
+                }
+                return true
+            }
+            image.isTemplate = true
+            statusItem.button?.image = image
+        }
+        statusItem.button?.toolTip = "Pulse · " + accessibility
+        statusItem.button?.setAccessibilityValue(accessibility)
+    }
+}
