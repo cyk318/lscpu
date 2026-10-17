@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import PulseCore
+import LscpuCore
 
 func localized(_ english: String, _ chinese: String) -> String {
     Locale.preferredLanguages.first?.hasPrefix("zh") == true ? chinese : english

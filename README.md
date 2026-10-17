@@ -1,4 +1,4 @@
-# Pulse
+# Lscpu
 
 安静常驻的 macOS 菜单栏系统监控。Swift、AppKit、SwiftUI 和 Swift Charts 原生实现，无第三方依赖，支持 macOS 14 及以上版本。
 
@@ -14,12 +14,12 @@
 
 ```sh
 ./scripts/build-app.sh
-open dist/Pulse.app
+open dist/Lscpu.app
 ```
 
-构建脚本生成 Release 二进制、原生绘制的应用图标和 `.app` 包，并进行本机 ad-hoc 签名。也可以使用 `swift run Pulse` 开发运行。
+构建脚本生成 Release 二进制、原生绘制的应用图标和 `.app` 包，并进行本机 ad-hoc 签名。也可以使用 `swift run Lscpu` 开发运行。
 
-长期使用可将 `dist/Pulse.app` 拖入“应用程序”，在弹窗左下角偏好设置中启用“登录时启动”。该开关使用 `SMAppService`；如系统要求批准，前往系统设置的登录项页面允许。默认不会自动启用登录启动。
+长期使用可将 `dist/Lscpu.app` 拖入“应用程序”，在弹窗左下角偏好设置中启用“登录时启动”。该开关使用 `SMAppService`；如系统要求批准，前往系统设置的登录项页面允许。默认不会自动启用登录启动。
 
 可以分别隐藏菜单栏中的指标，并选择 1、2、3 秒刷新间隔。全部隐藏时仍保留一个波形图标作为入口。菜单栏设置不会隐藏弹窗中的完整指标。
 
@@ -52,26 +52,26 @@ GPU 的 IOKit 查询 API 是原生 API，但驱动统计字段不是 Apple 承�
 
 ```sh
 # 不依赖 XCTest，因此仅有 Command Line Tools 也可运行
-swift run PulseCoreChecks
+swift run LscpuCoreChecks
 
 # 真实采样输出：首帧 CPU、网络为 null，等待下一帧建立速率
-swift run Pulse --diagnose
+swift run Lscpu --diagnose
 
 # 打开实际菜单栏弹窗，检查内容是否在屏幕可见区域内，再关闭退出
-swift run Pulse --verify-ui
+swift run Lscpu --verify-ui
 
 # 收集 64 秒真实数据，导出浅色 / 深色界面后退出
-# 运行时避免重复启动其他 Pulse 实例
-swift run Pulse --capture-previews docs/images
+# 运行时避免重复启动其他 Lscpu 实例
+swift run Lscpu --capture-previews docs/images
 ```
 
 核心检查覆盖 CPU tick 回绕、64 位网络计数、实际采样间隔、多接口、网络切换、计数重置、断网恢复、休眠间隔、历史边界、格式化和本机原生 API。
 
 ## 代码结构
 
-- `Sources/PulseCore`：独立采集、计数差值、历史窗口和格式化。
-- `Sources/Pulse`：菜单栏与 Popover 生命周期、采样调度、SwiftUI 界面和图表。
-- `Tests/PulseCoreTests`：可直接运行的核心边界和集成检查。
+- `Sources/LscpuCore`：独立采集、计数差值、历史窗口和格式化。
+- `Sources/Lscpu`：菜单栏与 Popover 生命周期、采样调度、SwiftUI 界面和图表。
+- `Tests/LscpuCoreTests`：可直接运行的核心边界和集成检查。
 - `scripts`、`Resources`：应用打包与图标生成。
 
 设计与接口参考：[NSStatusBar](https://developer.apple.com/documentation/appkit/nsstatusbar)、[NSPopover](https://developer.apple.com/documentation/appkit/nspopover)、[Mach host_statistics64](https://developer.apple.com/documentation/kernel/1502863-host_statistics64)、[Apple 开源路由接口头文件](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if.h)。

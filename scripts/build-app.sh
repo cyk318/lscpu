@@ -3,11 +3,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build -c release
 BIN_DIR="$(swift build -c release --show-bin-path)"
-APP="dist/Pulse.app"
+APP="dist/Lscpu.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/Pulse" "$APP/Contents/MacOS/Pulse"
+cp "$BIN_DIR/Lscpu" "$APP/Contents/MacOS/Lscpu"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-swift scripts/make-icon.swift .build/Pulse.iconset
-iconutil -c icns .build/Pulse.iconset -o "$APP/Contents/Resources/Pulse.icns"
+swift scripts/make-icon.swift .build/Lscpu.iconset
+iconutil -c icns .build/Lscpu.iconset -o "$APP/Contents/Resources/Lscpu.icns"
 codesign --force --deep --sign "${SIGN_IDENTITY:--}" "$APP"
-printf 'Built %s/dist/Pulse.app\n' "$PWD"
+printf 'Built %s/dist/Lscpu.app\n' "$PWD"

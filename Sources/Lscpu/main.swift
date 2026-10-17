@@ -1,5 +1,5 @@
 import AppKit
-import PulseCore
+import LscpuCore
 
 if CommandLine.arguments.contains("--diagnose") {
     let sampler = SystemSampler()

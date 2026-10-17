@@ -1,6 +1,6 @@
 import SwiftUI
 import ServiceManagement
-import PulseCore
+import LscpuCore
 
 struct PopoverView: View {
     @ObservedObject var store: MonitorStore
@@ -15,7 +15,7 @@ struct PopoverView: View {
                     .font(.system(size: 20, weight: .medium)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Pulse").font(.system(size: 17, weight: .semibold))
+                    Text("Lscpu").font(.system(size: 17, weight: .semibold))
                     Text(store.hardware).font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -66,7 +66,7 @@ struct PopoverView: View {
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
                 Spacer()
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power").frame(width: 24, height: 24) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help(localized("Quit Pulse", "退出 Pulse"))
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help(localized("Quit Lscpu", "退出 Lscpu"))
                     .keyboardShortcut("q")
             }.padding(.horizontal, 18).padding(.vertical, 9)
         }
@@ -155,9 +155,9 @@ struct SettingsView: View {
     private func updateLogin(_ enabled: Bool) {
         do {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-            loginMessage = SMAppService.mainApp.status == .requiresApproval ? localized("Allow Pulse in System Settings → Login Items.", "请在系统设置 → 登录项中允许 Pulse。") : nil
+            loginMessage = SMAppService.mainApp.status == .requiresApproval ? localized("Allow Lscpu in System Settings → Login Items.", "请在系统设置 → 登录项中允许 Lscpu。") : nil
         } catch {
-            loginMessage = localized("Could not update login item. Move Pulse to Applications and retry.", "无法更新登录项。请将 Pulse 移至应用程序后重试。")
+            loginMessage = localized("Could not update login item. Move Lscpu to Applications and retry.", "无法更新登录项。请将 Lscpu 移至应用程序后重试。")
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }

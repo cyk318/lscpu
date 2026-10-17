@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "Pulse",
+    name: "Lscpu",
     platforms: [.macOS(.v14)],
-    products: [.executable(name: "Pulse", targets: ["Pulse"])],
+    products: [.executable(name: "Lscpu", targets: ["Lscpu"])],
     targets: [
-        .target(name: "PulseCore"),
-        .executableTarget(name: "Pulse", dependencies: ["PulseCore"]),
-        .executableTarget(name: "PulseCoreChecks", dependencies: ["PulseCore"], path: "Tests/PulseCoreTests")
+        .target(name: "LscpuCore"),
+        .executableTarget(name: "Lscpu", dependencies: ["LscpuCore"]),
+        .executableTarget(name: "LscpuCoreChecks", dependencies: ["LscpuCore"], path: "Tests/LscpuCoreTests")
     ],
     swiftLanguageModes: [.v5]
 )

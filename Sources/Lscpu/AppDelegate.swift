@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
-import PulseCore
+import LscpuCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let store = MonitorStore()
@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.target = self
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.setAccessibilityLabel("Pulse")
+            button.setAccessibilityLabel("Lscpu")
         }
         popover.behavior = CommandLine.arguments.contains("--verify-ui") ? .applicationDefined : .transient
         popover.animates = true
@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard signature != lastSignature || statusItem.button?.image == nil else { return }
         lastSignature = signature
         if segments.isEmpty {
-            statusItem.button?.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "Pulse")
+            statusItem.button?.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "Lscpu")
         } else {
             let width = segments.reduce(CGFloat(8)) { $0 + $1.width }
             let image = NSImage(size: NSSize(width: width, height: 22), flipped: false) { _ in
@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             image.isTemplate = true
             statusItem.button?.image = image
         }
-        statusItem.button?.toolTip = "Pulse · " + accessibility
+        statusItem.button?.toolTip = "Lscpu · " + accessibility
         statusItem.button?.setAccessibilityValue(accessibility)
     }
 }

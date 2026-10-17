@@ -1,7 +1,7 @@
 import Foundation
-import PulseCore
+import LscpuCore
 
-final class PulseCoreChecks {
+final class LscpuCoreChecks {
     func testCPUUsesDeltaAndHandlesCounterWrap() {
         let old = CPUCounters(user: 100, system: 50, idle: 850)
         let current = CPUCounters(user: 120, system: 60, idle: 920)
@@ -91,7 +91,7 @@ func expectNotNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
 func expectEqual<T: Equatable>(_ a: T, _ b: T, file: StaticString = #file, line: UInt = #line) { expectTrue(a == b, file: file, line: line) }
 func expectEqual(_ a: Double, _ b: Double, accuracy: Double, file: StaticString = #file, line: UInt = #line) { expectTrue(abs(a - b) <= accuracy, file: file, line: line) }
 
-let checks = PulseCoreChecks()
+let checks = LscpuCoreChecks()
 let cases: [(String, () -> Void)] = [
     ("CPU delta and overflow", checks.testCPUUsesDeltaAndHandlesCounterWrap),
     ("64-bit counters and elapsed time", checks.testNetworkActualElapsedTimeAnd64BitCounters),

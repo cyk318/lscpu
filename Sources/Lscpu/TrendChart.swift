@@ -1,6 +1,6 @@
 import SwiftUI
 import Charts
-import PulseCore
+import LscpuCore
 
 struct TrendChart: View {
     let samples: [Snapshot]
